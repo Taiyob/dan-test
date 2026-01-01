@@ -1,0 +1,674 @@
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+//
+// ENUMS
+//
+
+enum UserRole {
+  subscriber
+  admin
+  employee
+}
+
+enum AccountStatus {
+  active
+  inactive
+  suspended
+  pending_verification
+}
+
+enum PaymentGateway {
+  stripe
+}
+
+enum PaymentStatus {
+  pending
+  processing
+  completed
+  failed
+  cancelled
+  refunded
+  partially_refunded
+}
+
+enum OTPType {
+  email_verification
+  login_verification
+  password_reset
+  two_factor
+}
+
+enum PlanStatus {
+  active
+  inactive
+  draft
+  archived
+}
+
+enum SubscriptionStatus {
+  active
+  canceled
+  expired
+  pending
+}
+
+enum TransactionType {
+  payment
+  refund
+  renewal
+  adjustment
+}
+
+enum ClientStatus {
+  active
+  inactive
+  archived
+}
+
+enum InspectionType {
+  pre_operation          // Before using the asset each day or shift
+  daily                  // Daily inspection
+  weekly                 // Weekly routine check
+  monthly                // Monthly inspection
+  quarterly              // Every 3 months
+  semi_annual            // Every 6 months
+  annual                 // Full yearly inspection
+  preventive_maintenance // Scheduled maintenance before failure
+  corrective_maintenance // After an issue is found
+  repair                 // After a breakdown or fix
+  safety                 // Safety-focused inspection
+  calibration            // Accuracy or measurement calibration
+  performance            // Performance or efficiency testing
+  load_test              // Stress/load testing (for cranes, lifts, etc.)
+  electrical             // Electrical system inspection
+  structural             // Physical or structural integrity check
+  environmental          // Environmental or compliance check
+  fire_safety            // Fire extinguishers, alarms, and exits
+  installation           // After new installation or relocation
+  post_incident          // After accident, failure, or damage
+  shutdown               // During planned plant or system shutdown
+  commissioning          // Before first use of a new asset
+  special                // Any special/custom inspection
+}
+
+enum InspectionStatus {
+  scheduled
+  not_scheduled
+  in_progress
+  completed
+  overdue
+  due_soon
+  cancelled
+}
+
+enum ReminderType {
+  weekly
+  monthly
+  quarterly
+  semi_annual
+  annual
+  one_time
+  days_2_before     
+  days_15_before
+  days_30_before
+}
+
+
+enum NotificationMethod {
+  sms
+  email
+  both
+}
+
+enum ReportType {
+  monthly
+  quarterly
+  annual
+  custom
+}
+
+enum ReportStatus {
+  ready
+  not_available
+}
+
+//
+// MODELS
+//
+
+model User {
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email           String        @unique
+  phoneNumber     String?
+  firstName       String
+  lastName        String
+  displayName     String?
+  role            UserRole      @default(subscriber)
+  designation     String?
+  status          AccountStatus @default(pending_verification)
+  password        String
+  emailVerifiedAt DateTime?
+  terms           Boolean?
+  avatarUrl       String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @default(now()) @updatedAt
+
+  memberships Membership? @relation("UserMembership")
+
+  otps OTP[]
+
+  //  relations
+  clients      Client[]      @relation("UserClients")
+  employees    Employee[]    @relation("UserEmployees")
+  testimonials Testimonial[] @relation("UserTestimonials")
+  emailTemplates EmailTemplate[] @relation("UserEmailTemplate")
+  smsTemplates SMSTemplate[] @relation("SMSTemplate")
+}
+
+//
+// OTP MODEL
+//
+
+model OTP {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  identifier String
+  code       Int
+  type       OTPType
+  expiresAt  DateTime
+  verified   Boolean  @default(false)
+  attempts   Int      @default(0)
+  userId     String?  @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([identifier, type, verified])
+  @@index([expiresAt])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+//
+// PLAN & MEMBERSHIP
+//
+
+model Plan {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String
+  description  String?
+  price        Decimal    @db.Decimal(10, 2)
+  billingCycle String     @default("monthly")
+  status       PlanStatus @default(active)
+  features     String[]
+  limits       Json?      @db.Json
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  memberships Membership[]
+}
+
+model Membership {
+  id                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId             String             @unique @db.Uuid
+  planId             String             @db.Uuid
+  stripeCustomerID   String             @default("0000")   
+  subscriptionStatus SubscriptionStatus @default(pending)
+  paymentStatus      PaymentStatus      @default(pending)
+  paymentGateway     PaymentGateway?    @default(stripe)
+  startDate          DateTime           @default(now())
+  endDate            DateTime?
+  canceledAt         DateTime?
+  renewalAt          DateTime?
+  amountPaid         Decimal?           @db.Decimal(10, 2)
+  transactionId      String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  user User @relation("UserMembership", fields: [userId], references: [id], onDelete: Cascade)
+  plan Plan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  transactions  Transaction[]
+  accessControl AccessControl?
+
+  @@index([userId])
+  @@index([planId])
+  @@index([subscriptionStatus])
+  @@index([paymentStatus])
+}
+
+//
+// ACCESS CONTROL (Plan limits)
+//
+
+model AccessControl {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  membershipId String     @unique @db.Uuid
+  membership   Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  // Plan-based access limits
+  maxClients    Int     @default(25)
+  maxEmployees  Int     @default(10)
+  maxCranes     Int     @default(50)
+  maxStorageGB  Int     @default(10)
+  enableAPI     Boolean @default(false)
+  enableReports Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+//
+// TRANSACTION
+//
+
+model Transaction {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  membershipId    String          @db.Uuid
+  amount          Decimal         @db.Decimal(10, 2)
+  currency        String          @default("usd")
+  paymentGateway  PaymentGateway  @default(stripe)
+  paymentStatus   PaymentStatus   @default(pending)
+  transactionType TransactionType @default(payment)
+  externalId      String?
+  description     String?
+  metadata        Json?
+  processedAt     DateTime?
+  refundedAt      DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  membership Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@index([membershipId])
+  @@index([paymentStatus])
+  @@index([paymentGateway])
+}
+
+//
+// REPORT
+//
+
+model Report {
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String
+  type        ReportType
+  period      String
+  generated   DateTime     @default(now())
+  sizeBytes   Int?
+  fileUrls    Json?  
+  status      ReportStatus @default(not_available)
+
+  clientId    String?      @db.Uuid
+  employeeId  String?      @db.Uuid
+  uploadedById String?     @db.Uuid
+
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @default(now()) @updatedAt
+  deletedAt   DateTime?
+  isDeleted   Boolean      @default(false)
+
+  @@index([clientId])
+  @@index([employeeId])
+  @@index([uploadedById])
+  @@index([type])
+  @@index([status])
+}
+
+//
+// CLIENT
+//
+
+model Client {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company        String
+  status         ClientStatus @default(active)
+  name           String
+  email          String?
+  phone          String?
+  cranes         Int          @default(0)
+  location       String?
+  additionalNote String?
+
+  ownerId String @db.Uuid //employer
+
+  //relations
+  owner User @relation("UserClients", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  assets Asset[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  deletedAt  DateTime?
+  isDeleted  Boolean      @default(false)
+  Inspection Inspection[]
+  reminders Reminder[]
+
+  @@index([ownerId])
+}
+
+//
+// EMPLOYEE
+//
+model Employee {
+  id              String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  firstName       String
+  lastName        String
+  email           String  @unique
+  phone           String?
+  avatarUrl       String? @default("https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQIpU1pLrXfEsRjIpKjs1n7Tr5O41jC2is8hA&s")
+  employeeId      String?
+  role            String?
+  additionalNotes String?
+
+  //relations
+  employerId     String                  @db.Uuid
+  employer       User                    @relation("UserEmployees", fields: [employerId], references: [id], onDelete: Cascade)
+  certifications EmployeeCertification[]
+
+  assignedInspections InspectionInspectors[] @relation("EmployeeInspections")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  deletedAt DateTime?
+  isDeleted Boolean   @default(false)
+  inspectors      ReminderInspector[]
+
+  @@index([employerId])
+}
+
+// ---------------------------------------------------
+// --- NEW CERTIFICATION MODELS (Based on your idea) ---
+// ---------------------------------------------------
+
+model CertificationTemplate {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String  @unique
+  description String?
+
+  // Relation to the join table
+  employeeCertifications EmployeeCertification[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+  isDeleted Boolean   @default(false)
+
+  @@index([name])
+}
+
+//
+// EMPLOYEE CERTIFICATION (The Join Table)
+// This links an Employee to a CertificationTemplate and stores the dates.
+//
+model EmployeeCertification {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  // Link to the Employee
+  employeeId String   @db.Uuid
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  // Link to the master certification type 
+  certificationTemplateId String                @db.Uuid
+  certificationTemplate   CertificationTemplate @relation(fields: [certificationTemplateId], references: [id], onDelete: Cascade)
+
+  // Instance-specific data
+  issueDate       DateTime?
+  expiryDate      DateTime?
+  additionalNotes String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+  isDeleted Boolean   @default(false)
+
+  @@index([employeeId])
+  @@index([certificationTemplateId])
+  @@index([expiryDate])
+}
+
+//
+// ASSET
+//
+
+model Asset {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String?
+  model       String?
+  description String?
+  serialNo    String? @unique
+  clientId    String  @db.Uuid
+  location    String?
+  status      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  deletedAt DateTime?
+  isDeleted Boolean   @default(false)
+
+  // Relations
+  client      Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  inspections Inspection[]
+  reminders   Reminder[]
+
+  @@index([clientId])
+}
+
+//
+// Inspection
+//
+model Inspection {
+  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId        String           @db.Uuid
+  assetId         String           @db.Uuid
+  inspectionType  InspectionType
+  status          InspectionStatus? 
+  dueDate  DateTime?
+  lastInspected  DateTime?
+  completedAt     DateTime?
+  // reports         Report[]
+  location        String?
+  inspectionNotes String?
+
+  deletedAt DateTime?
+  isDeleted Boolean   @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  asset  Asset  @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  // --- NEW RELATION: Link to the join table ---
+  inspectors InspectionInspectors[] @relation("InspectionAssignments")
+
+
+  @@index([clientId])
+  @@index([assetId])
+  @@index([inspectionType])
+  @@index([status])
+  @@index([dueDate])
+}
+
+//junction table for instecption - inspector
+model InspectionInspectors {
+  inspectionId String @db.Uuid
+  employeeId   String @db.Uuid
+
+  inspection Inspection @relation("InspectionAssignments", fields: [inspectionId], references: [id], onDelete: Cascade)
+  employee   Employee   @relation("EmployeeInspections", fields: [employeeId], references: [id], onDelete: Cascade)
+
+  assignedAt DateTime @default(now()) // Optional: track when assignment happened
+
+  @@id([inspectionId, employeeId]) // Composite primary key
+  @@index([employeeId]) // Index for querying by employee
+}
+
+model Reminder {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId           String   @db.Uuid
+  assetId            String   @db.Uuid
+
+  notificationMethod NotificationMethod
+  reminderType       ReminderType
+  reminderTemplateId String?
+  manualReminderMessage String?
+  reminderDate       DateTime?
+  additionalNotes    String?
+  reminderStatus     String?   @default("scheduled")
+  manualEmailBody    String?  @db.Text
+  manualSmsBody      String?  @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+  isDeleted Boolean   @default(false)
+
+  // Relations
+  client          Client          @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  asset           Asset           @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  smsTemplate     SMSTemplate?    @relation(fields: [smsTemplateId], references: [id])
+  smsTemplateId   String?         @db.Uuid
+  emailTemplate   EmailTemplate?  @relation(fields: [emailTemplateId], references: [id])
+  emailTemplateId String?         @db.Uuid
+
+  // Many-to-many with Employee
+  inspectors      ReminderInspector[]
+
+  @@index([clientId])
+  @@index([assetId])
+  @@index([reminderDate])
+  @@index([reminderType])
+}
+
+model ReminderInspector {
+  reminderId   String @db.Uuid
+  employeeId   String @db.Uuid
+  assignedAt   DateTime @default(now())
+
+  reminder     Reminder @relation(fields: [reminderId], references: [id], onDelete: Cascade)
+  employee     Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@id([reminderId, employeeId])
+  @@index([employeeId])
+}
+
+
+// model Reminder {
+//   id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+//   clientId           String   @db.Uuid
+//   assetId            String   @db.Uuid
+//   inspectorIds       String?  @db.Uuid
+  
+//   notificationMethod NotificationMethod[]
+
+//   reminderType       ReminderType
+//   reminderTemplateId String?
+
+//   manualReminderMessage String?
+
+//   reminderDate       DateTime?
+//   additionalNotes    String? 
+//   reminderStatus     String?  
+
+//   createdAt DateTime @default(now())
+//   updatedAt DateTime @updatedAt
+
+//   deletedAt DateTime?
+//   isDeleted Boolean   @default(false)
+
+//   smsTemplate     SMSTemplate?   @relation(fields: [smsTemplateId], references: [id])
+//   smsTemplateId   String?        @db.Uuid
+//   asset           Asset          @relation(fields: [assetId], references: [id], onDelete: Cascade)
+//   emailTemplate   EmailTemplate? @relation(fields: [emailTemplateId], references: [id])
+//   client          Client         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+//   emailTemplateId String?        @db.Uuid
+
+//   inspector Employee? @relation("EmployeeReminder", fields: [inspectorIds], references: [id])
+
+//   @@index([clientId])
+//   @@index([assetId])
+//   @@index([reminderDate])
+//   @@index([reminderType])
+// }
+
+
+model SMSTemplate {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String @db.Uuid 
+  name      String
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation("SMSTemplate", fields: [userId], references: [id], onDelete: Cascade)
+
+  reminders Reminder[]
+}
+
+model SMSLog {
+  id            String   @id @default(cuid())
+  messageSid    String   @unique
+  fromPhone     String?
+  toPhone       String
+  status        String
+  errorCode     String?
+  errorMessage  String?
+  body          String?
+  direction     String   @default("outbound")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([toPhone])
+  @@index([status])
+}
+
+model EmailTemplate {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String    @unique
+  subject     String
+  mailtrapId  String    @unique
+  content     String    @db.Text
+  description String?   @db.Text
+  category    String?
+  userId      String @db.Uuid
+  isActive    Boolean   @default(false)
+  htmlBody    String       
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+  user User @relation("UserEmailTemplate", fields: [userId], references: [id], onDelete: Cascade)
+  reminders Reminder[]
+}
+
+//
+// TESTIMONIAL MODEL
+//
+
+model Testimonial {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  review    String   @db.Text
+  rating    Int
+  userId    String   @db.Uuid
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user User @relation("UserTestimonials", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+

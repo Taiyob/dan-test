@@ -1,0 +1,63 @@
+# services:
+#   postgres:
+#     image: postgres:17
+#     container_name: dandubrule
+#     restart: unless-stopped
+#     environment:
+#       POSTGRES_USER: aiarnob23
+#       POSTGRES_PASSWORD: aiarnob23
+#       POSTGRES_DB: dandubrule
+#     ports:
+#       - "6090:5432" # maps container port to local machine
+#     volumes:
+#       - dandubrule_postgres:/var/lib/postgresql/data
+#     networks:
+#       - dandubrule-network
+
+# networks:
+#   dandubrule-network:
+#     driver: bridge
+#     name: dandubrule-network
+
+# volumes:
+#   dandubrule_postgres:
+#     driver: local
+#     name: dandubrule_postgres
+
+
+services:
+  # app:
+  #   build: .
+  #   container_name: dandubrule_app
+  #   restart: unless-stopped
+  #   ports:
+  #     - "3000:3000"
+  #   depends_on:
+  #     - postgres
+  #   environment:
+  #     DATABASE_URL: postgres://aiarnob23:aiarnob23@postgres:5432/dandubrule
+  #   networks:
+  #     - dandubrule-network
+
+  postgres:
+    image: postgres:17
+    container_name: dandubrule_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: aiarnob23
+      POSTGRES_PASSWORD: aiarnob23
+      POSTGRES_DB: dandubrule
+    ports:
+      - "6090:5432"
+    volumes:
+      - dandubrule_postgres:/var/lib/postgresql/data
+    networks:
+      - dandubrule-network
+
+networks:
+  dandubrule-network:
+    driver: bridge
+
+volumes:
+  dandubrule_postgres:
+    driver: local
